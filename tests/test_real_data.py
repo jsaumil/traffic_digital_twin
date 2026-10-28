@@ -73,3 +73,30 @@ def test_live_poll_applies_logged_parameter_command():
     assert service.engine.config.demand_north==round(expected)
     assert service.engine.config.desired_speed==pytest.approx(40/3.6,abs=.01)
     assert LiveTraffic(service,key='').status['enabled'] is False
+
+
+def test_live_feed_survives_http_client_errors():
+    import aiohttp
+    class Service:
+        def __init__(self):
+            self.engine=Engine(Config(demand_mode='live'));self.commands=[]
+        def command(self,message):
+            self.commands.append(message);self.engine.command(message['action'],message['parameters'])
+    calls=[]
+    async def flaky(session,key,lat,lon):
+        calls.append(1)
+        if len(calls)==1:
+            raise aiohttp.ServerDisconnectedError()
+        return {'currentSpeed':20,'freeFlowSpeed':40,'confidence':.9,'roadClosure':False}
+    async def scenario():
+        service=Service();live=LiveTraffic(service,interval=0.01,key='test',fetch=flaky)
+        task=asyncio.create_task(live.run())
+        for _ in range(200):
+            if service.commands:
+                break
+            assert not task.done(), 'live feed task died on a client error'
+            await asyncio.sleep(0.01)
+        task.cancel()
+        return service,live
+    service,live=asyncio.run(scenario())
+    assert service.commands and live.status['message']=='live'

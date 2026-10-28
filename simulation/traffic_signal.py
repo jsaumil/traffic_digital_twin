@@ -26,10 +26,11 @@ class TrafficSignal:
     def stage(self):
         return STAGES[self.index]
 
-    def duration(self, config):
-        kind = self.index % 3
+    def duration(self, config, index=None):
+        index = self.index if index is None else index
+        kind = index % 3
         if kind == 0:
-            return getattr(config, PHASES[self.index // 3][2])
+            return getattr(config, PHASES[index // 3][2])
         return config.yellow_time if kind == 1 else config.all_red_time
 
     def step(self, dt, config):
@@ -49,11 +50,7 @@ class TrafficSignal:
         return groups_for(self.stage)
 
     def cycle(self, config):
-        saved, total = self.index, 0.0
-        for self.index in range(len(STAGES)):
-            total += self.duration(config)
-        self.index = saved
-        return total
+        return sum(self.duration(config, index) for index in range(len(STAGES)))
 
     def snapshot(self, config):
         return {"stage": self.stage, "elapsed": self.elapsed, "cycle": self.cycle(config),

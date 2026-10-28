@@ -94,7 +94,8 @@ class LiveTraffic:
                 if self.service.engine.config.demand_mode == "live":
                     try:
                         await self.poll_once(session)
-                    except (OSError, ValueError, KeyError, TypeError, asyncio.TimeoutError, json.JSONDecodeError) as exc:
+                    except (aiohttp.ClientError, OSError, ValueError, KeyError, TypeError, asyncio.TimeoutError,
+                            json.JSONDecodeError) as exc:
                         self.status["message"] = f"error: {exc}"
                     await asyncio.sleep(self.interval)
                 else:

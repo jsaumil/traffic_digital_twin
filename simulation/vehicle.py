@@ -47,7 +47,7 @@ class Vehicle:
 
     @property
     def lane_id(self):
-        return f"{self.route.approach}_{self.route.lane}"
+        return self.route.lane_id
 
     def shares_strip(self, other):
         return self.sub == 0 or other.sub == 0 or self.sub == other.sub

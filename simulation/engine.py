@@ -105,10 +105,23 @@ class Engine:
                             "action": action, "parameters": parameters})
         return self.snapshot()
 
-    def _leader(self, vehicle):
-        closest, leader_speed = math.inf, 0
-        for other in self.vehicles.values():
-            if other.id == vehicle.id:
+    def _leader_index(self):
+        """Possible leaders, grouped by incoming lane and by occupied receiving lane, with their
+        creation order. Lets each vehicle scan its own lane instead of the whole population."""
+        by_lane, by_exit = {}, {}
+        for order, vehicle in enumerate(self.vehicles.values()):
+            by_lane.setdefault(vehicle.lane_id, []).append((order, vehicle))
+            if vehicle.s >= vehicle.route.exit_start:
+                by_exit.setdefault((vehicle.route.destination, vehicle.route.exit_lane), []).append((order, vehicle))
+        return by_lane, by_exit
+
+    def _leader(self, vehicle, index=None):
+        by_lane, by_exit = index or self._leader_index()
+        closest, leader_speed, leader_order = math.inf, 0, None
+        candidates = (by_lane.get(vehicle.lane_id, []) +
+                      by_exit.get((vehicle.route.destination, vehicle.route.exit_lane), []))
+        for order, other in candidates:
+            if other is vehicle:
                 continue
             projected = None
             # Same route anywhere, or same incoming lane until the paths diverge in the box.
@@ -122,8 +135,9 @@ class Engine:
                 projected = vehicle.route.exit_start + other.s - other.route.exit_start
             if projected is not None and projected > vehicle.s:
                 gap = projected - vehicle.s - (other.length + vehicle.length) / 2
-                if gap < closest:
-                    closest, leader_speed = gap, other.speed
+                # Equal gaps go to the earliest-created vehicle, as in a full population scan.
+                if gap < closest or (gap == closest and order < leader_order):
+                    closest, leader_speed, leader_order = gap, other.speed, order
         return closest, leader_speed
 
     def step(self):
@@ -133,8 +147,9 @@ class Engine:
         self.signal.step(dt, c)
         self.intersection.admit(self.vehicles, self.signal, c)
         updates = []
+        index = self._leader_index()
         for vehicle in sorted(self.vehicles.values(), key=lambda v: v.id):
-            gap, leader_speed = self._gap(vehicle)
+            gap, leader_speed = self._gap(vehicle, index)
             accel = self._acceleration(vehicle, vehicle.speed, gap, leader_speed)
             # Ballistic update; a vehicle that would reverse stops exactly within the step.
             new_speed = vehicle.speed + accel * dt
@@ -203,8 +218,8 @@ class Engine:
                 options.append((len(occupants), lane.index, lane))
         return min(options)[2] if options else None
 
-    def _gap(self, vehicle):
-        gap, leader_speed = self._leader(vehicle)
+    def _gap(self, vehicle, index=None):
+        gap, leader_speed = self._leader(vehicle, index)
         # A virtual stopped leader represents the stop line/reservation gate. Facing a green, a
         # driver only brakes for it once close enough to have asked for (and been refused) entry.
         if not vehicle.admitted and not (self.signal.colors()[vehicle.route.approach] == "GREEN" and

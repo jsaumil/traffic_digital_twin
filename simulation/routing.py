@@ -30,6 +30,7 @@ def arc_controls(start, d0, end, d1):
 class Route:
     def __init__(self, approach, lane, turn):
         self.approach, self.lane, self.turn = approach, lane, turn
+        self.lane_id = f"{approach}_{lane}"
         arm = ARMS[approach]
         self.destination = TURNS[approach][turn]
         exit_arm = ARMS[self.destination]

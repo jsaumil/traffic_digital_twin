@@ -17,6 +17,7 @@ from simulation.junction import DATA as JUNCTION
 
 ROOT = Path(__file__).resolve().parents[1]
 LOG = logging.getLogger("traffic")
+STEP_BUDGET = 0.05  # Wall-clock seconds of physics per event-loop turn.
 
 
 class Service:
@@ -78,9 +79,13 @@ class Service:
             c = self.engine.config
             if self.engine.mode == "running":
                 accumulator += elapsed * c.simulation_speed
-                steps = min(20, int((accumulator + 1e-9) / c.timestep))
-                for _ in range(steps):
+                wanted, steps = min(20, int((accumulator + 1e-9) / c.timestep)), 0
+                # Bound each batch in wall time so heartbeats and snapshots keep flowing under load;
+                # unfinished steps stay in the accumulator (simulation speed lags, timestep does not).
+                deadline = time.monotonic() + STEP_BUDGET
+                while steps < wanted and (steps == 0 or time.monotonic() < deadline):
                     self.engine.step()
+                    steps += 1
                 accumulator = min(max(0, accumulator - steps * c.timestep), 20 * c.timestep)
             else:
                 accumulator = 0
@@ -177,7 +182,7 @@ def create_app(config=None, autostart=False):
         return web.json_response(JUNCTION)
     async def asset(request):
         name = request.match_info.get("asset", "index.html")
-        if name not in {"index.html", "styles.css", "app.js"}:
+        if name not in {"index.html", "styles.css", "app.js", "map.js"}:
             raise web.HTTPNotFound()
         return web.FileResponse(ROOT / "dashboard" / name)
     async def lifecycle(app):

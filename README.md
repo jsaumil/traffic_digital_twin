@@ -125,6 +125,10 @@ and objects are preserved. Rebuilding twice does not accumulate scene objects.
   heads at the real stop lines, and 106 OSM building footprints extruded to height.
 - Vehicle meshes, signal lamps, queue labels, phase countdown, clock, and metrics follow incoming
   simulation snapshots. There are no vehicle animation keyframes.
+- The dashboard map (`dashboard/map.js`) animates at the display frame rate by interpolating
+  between the ~10 Hz snapshots (drawn ~120 ms behind the newest one). Scroll to zoom, drag to
+  pan, double-click to reset, hover a vehicle for its speed, state and route. Brake lights,
+  turn indicators and, after dusk on the simulated clock, headlights and streetlights are shown.
 - `TR.camera` is the complete overview. `TR.camera.detail` is a closer junction observer.
   Switch in Blender's scene camera setting, or use:
 
