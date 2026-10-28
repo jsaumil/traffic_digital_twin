@@ -9,9 +9,11 @@ from pathlib import Path
 import time
 
 from aiohttp import web, WSMsgType
+from communication.live_traffic import LiveTraffic
 from communication.protocol import MAX_BYTES, dumps, loads
 from simulation.config import Config
 from simulation.engine import Engine
+from simulation.junction import DATA as JUNCTION
 
 ROOT = Path(__file__).resolve().parents[1]
 LOG = logging.getLogger("traffic")
@@ -27,6 +29,7 @@ class Service:
         self.tasks = []
         self.revision = 0
         self.events = deque(maxlen=200)
+        self.live = LiveTraffic(self)
 
     def command(self, message):
         if set(message) - {"type", "request_id", "action", "parameters"}:
@@ -49,7 +52,7 @@ class Service:
                 or not 0 <= body["sequence"] <= self.engine.sequence):
             raise ValueError("Invalid applied-state acknowledgement")
         count = body.get("vehicle_count")
-        if type(count) is not int or not 0 <= count <= 200:
+        if type(count) is not int or not 0 <= count <= 600:
             raise ValueError("Invalid rendered vehicle count")
         missing=body.get("missing_signals",[])
         if not isinstance(missing,list) or len(missing)>12 or any(not isinstance(x,str) or len(x)>32 for x in missing):
@@ -62,7 +65,8 @@ class Service:
         ack = dict(self.blender_ack) if self.blender_ack else None
         age = time.monotonic() - ack.pop("received") if ack else None
         return {"ok": True, "session_id": self.engine.session_id, "clients": len(self.peers),
-                "blender_connected": age is not None and age < 3, "blender_age": age, "blender": ack}
+                "blender_connected": age is not None and age < 3, "blender_age": age, "blender": ack,
+                "live": self.live.status}
 
     async def simulation_loop(self):
         last, accumulator, revision = time.monotonic(), 0.0, -1
@@ -169,13 +173,16 @@ def create_app(config=None, autostart=False):
         return web.json_response(service.health())
     async def history(request):
         return web.json_response({"samples": list(service.engine.history)})
+    async def junction(request):
+        return web.json_response(JUNCTION)
     async def asset(request):
         name = request.match_info.get("asset", "index.html")
         if name not in {"index.html", "styles.css", "app.js"}:
             raise web.HTTPNotFound()
         return web.FileResponse(ROOT / "dashboard" / name)
     async def lifecycle(app):
-        service.tasks = [asyncio.create_task(service.simulation_loop()), asyncio.create_task(service.publish_loop())]
+        service.tasks = [asyncio.create_task(service.simulation_loop()), asyncio.create_task(service.publish_loop()),
+                         asyncio.create_task(service.live.run())]
         yield
         for ws in list(service.peers):
             await ws.close(code=1001, message=b"Server shutting down")
@@ -194,6 +201,7 @@ def create_app(config=None, autostart=False):
     app.router.add_get("/api/state", state)
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/history", history)
+    app.router.add_get("/api/junction", junction)
     app.router.add_get("/", asset)
     app.router.add_get("/{asset}", asset)
     return app

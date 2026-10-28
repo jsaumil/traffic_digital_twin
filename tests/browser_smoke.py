@@ -26,10 +26,10 @@ def main():
         assert state['parameters']['demand_east']==900
         result['websocket_parameters_reach_engine']=True
         page.locator('#start').click();expect(page.locator('#mode')).to_have_text('running')
-        page.wait_for_function("document.getElementById('phase').textContent==='EW GREEN'",timeout=12000)
+        page.wait_for_function("document.getElementById('phase').textContent==='E GREEN'",timeout=12000)
         state=page.request.get(args.url+'/api/state').json()
         assert state['signals']['groups']['E']=='GREEN' and state['signals']['groups']['N']=='RED'
-        assert any(v['progress']>54 for v in state['vehicles'].values())
+        assert any(v['distance_to_stop']<0 for v in state['vehicles'].values())
         result['changed_timings_release_moving_traffic']=True
         page.locator('#pause').click();expect(page.locator('#mode')).to_have_text('paused')
         frozen=page.request.get(args.url+'/api/state').json();page.wait_for_timeout(350)
@@ -42,7 +42,7 @@ def main():
         result['resume']=True
         page.locator('#stop').click();expect(page.locator('#mode')).to_have_text('stopped')
         page.locator('#reset').click();expect(page.locator('#clock')).to_contain_text('0.0')
-        expect(page.locator('#phase')).to_have_text('NS GREEN')
+        expect(page.locator('#phase')).to_have_text('N GREEN')
         result['stop_and_reset']=True
         context.set_offline(True)
         # Chromium's offline emulation doesn't reliably terminate an already-open WS.

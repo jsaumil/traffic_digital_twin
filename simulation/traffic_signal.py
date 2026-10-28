@@ -1,7 +1,19 @@
-"""Authoritative fixed-time NS/EW signal machine; no renderer-owned timing."""
+"""Authoritative fixed-time signal machine over the junction's phase plan; no renderer-owned timing."""
+from simulation.junction import PHASES
 from simulation.lane import APPROACHES
 
-STAGES = ("NS_GREEN", "NS_YELLOW", "ALL_RED_TO_EW", "EW_GREEN", "EW_YELLOW", "ALL_RED_TO_NS")
+STAGES = tuple(stage for i, (name, _, _) in enumerate(PHASES) for stage in
+               (f"{name}_GREEN", f"{name}_YELLOW", f"ALL_RED_TO_{PHASES[(i + 1) % len(PHASES)][0]}"))
+
+
+def groups_for(stage):
+    """Signal colour per approach implied by a stage name."""
+    result = {approach: "RED" for approach in APPROACHES}
+    index = STAGES.index(stage)
+    if index % 3 < 2:
+        for approach in PHASES[index // 3][1]:
+            result[approach] = "GREEN" if index % 3 == 0 else "YELLOW"
+    return result
 
 
 class TrafficSignal:
@@ -15,8 +27,10 @@ class TrafficSignal:
         return STAGES[self.index]
 
     def duration(self, config):
-        return (config.green_ns, config.yellow_time, config.all_red_time,
-                config.green_ew, config.yellow_time, config.all_red_time)[self.index]
+        kind = self.index % 3
+        if kind == 0:
+            return getattr(config, PHASES[self.index // 3][2])
+        return config.yellow_time if kind == 1 else config.all_red_time
 
     def step(self, dt, config):
         # A live duration reduction must NOT borrow time from a yellow/all-red stage
@@ -32,13 +46,15 @@ class TrafficSignal:
             self.transitions += 1
 
     def colors(self):
-        result = {approach: "RED" for approach in APPROACHES}
-        if self.index in (0, 1, 3, 4):
-            pair = "NS" if self.index < 3 else "EW"
-            for approach in pair:
-                result[approach] = "GREEN" if self.index in (0, 3) else "YELLOW"
-        return result
+        return groups_for(self.stage)
+
+    def cycle(self, config):
+        saved, total = self.index, 0.0
+        for self.index in range(len(STAGES)):
+            total += self.duration(config)
+        self.index = saved
+        return total
 
     def snapshot(self, config):
-        return {"stage": self.stage, "elapsed": self.elapsed,
+        return {"stage": self.stage, "elapsed": self.elapsed, "cycle": self.cycle(config),
                 "remaining": max(0, self.duration(config) - self.elapsed), "groups": self.colors()}

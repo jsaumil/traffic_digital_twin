@@ -1,0 +1,7 @@
+{
+ "_comment": "Manual corrections to OSM. OSM has no lane tags here and carriageway centrelines (8-9 m apart on Ring Road, 6.3 m on Drive-in Road) are not precise enough to infer widths. Ring Road: 3+3 lanes from its 120 ft (36.6 m) right of way. Drive-in Road: 2+2. Kerbed median 1.2 m. Verify against satellite imagery and edit, then re-run tools/import_osm.py.",
+ "N": {"median": 1.2},
+ "S": {"median": 1.2},
+ "E": {"median": 1.2},
+ "W": {"median": 1.2, "name": "Drive-in Road"}
+}

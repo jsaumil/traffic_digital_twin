@@ -60,14 +60,14 @@ def main():
         assert tuple(bpy.data.objects['TR.veh_000001'].location)==pose and scene['traffic_time']==timer
         result['pause_freezes_vehicles_and_signal_timers']=True
         command('resume')
-        wait(lambda:scene.get('traffic_phase')=='EW_GREEN')
+        wait(lambda:scene.get('traffic_phase')=='E_GREEN')
         assert bpy.data.objects['TR.signal.E.GREEN']['active']
         assert bpy.data.objects['TR.signal.N.RED']['active']
         assert not bpy.data.objects['TR.signal.N.GREEN']['active']
         result['edited_phase_timings_drive_actual_lamps']=True
         seq=command('reset');wait(lambda:scene.get('traffic_sequence')==seq)
         assert scene['traffic_time']==0 and math.dist(initial,bpy.data.objects['TR.veh_000001'].location)<1e-5
-        assert scene['traffic_phase']=='NS_GREEN'
+        assert scene['traffic_phase']=='N_GREEN'
         result['reset_restores_signal_phase_and_entity_mapping']=True
         bpy.data.objects.remove(bpy.data.objects['TR.veh_000001'],do_unlink=True)
         seq=command('parameters',{'simulation_speed':2});wait(lambda:scene.get('traffic_sequence')==seq)

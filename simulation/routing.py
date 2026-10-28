@@ -1,63 +1,92 @@
-"""Arc-length sampled lane-center paths. XY metres, Z up, right-hand traffic."""
+"""Arc-length sampled lane-centre paths over the real junction geometry. XY metres, Z up."""
 from bisect import bisect_right
 from functools import lru_cache
 import math
 
-from simulation.lane import EXTENT, LANE_WIDTH, OUTWARD, STOP_DISTANCE, STOP_RADIUS
+from simulation.geometry import add, left_normal, mul, signed_angle, sub, unit
+from simulation.junction import ARMS, FAR_TURN, TURNS
+
+LATERAL_ACCELERATION = 2.5  # Comfortable urban turning, m/s^2.
+CONFLICT_DISTANCE = 3.0  # Centreline separation below which two box paths conflict.
 
 
-def add(a, b):
-    return a[0] + b[0], a[1] + b[1]
-
-
-def mul(a, n):
-    return a[0] * n, a[1] * n
+def arc_controls(start, d0, end, d1):
+    """Cubic Bezier control legs approximating a circular arc between two tangents."""
+    theta = abs(signed_angle(d0, d1))
+    chord = math.dist(start, end)
+    denominator = d0[0] * d1[1] - d0[1] * d1[0]
+    if theta < 0.05 or abs(denominator) < 1e-9:
+        return chord / 3, chord / 3
+    # Corner where the entry and exit tangent lines meet: start + t*d0 == end - u*d1.
+    delta = sub(end, start)
+    t = (delta[0] * d1[1] - delta[1] * d1[0]) / denominator
+    u = (delta[0] * d0[1] - delta[1] * d0[0]) / denominator
+    if t <= 0 or u <= 0:
+        return chord / 3, chord / 3
+    factor = 4 / 3 * math.tan(theta / 4) / math.tan(theta / 2)
+    return t * factor, u * factor
 
 
 class Route:
     def __init__(self, approach, lane, turn):
         self.approach, self.lane, self.turn = approach, lane, turn
-        outward = OUTWARD[approach]
-        incoming = mul(outward, -1)
-        right = (incoming[1], -incoming[0])
-        offset = (lane + 0.5) * LANE_WIDTH
-        start = add(mul(outward, EXTENT), mul(right, offset))
-        stop = add(mul(outward, STOP_RADIUS), mul(right, offset))
-        outgoing = incoming if turn == "straight" else ((-incoming[1], incoming[0]) if turn == "left" else (incoming[1], -incoming[0]))
-        self.destination = next(key for key, value in OUTWARD.items() if value == outgoing)
-        self.exit_lane = 0 if turn == "left" else 1 if turn == "right" else lane
-        right_out = (outgoing[1], -outgoing[0])
-        end = add(mul(outgoing, STOP_RADIUS), mul(right_out, (self.exit_lane + 0.5) * LANE_WIDTH))
-        far = add(end, mul(outgoing, EXTENT - STOP_RADIUS))
-        control = 12 if turn != "right" else 7
-        c1, c2 = add(stop, mul(incoming, control)), add(end, mul(outgoing, -control))
-        self.points = [start, stop]
-        for i in range(1, 101):
-            t, u = i / 100, 1 - i / 100
-            self.points.append(tuple(u**3 * stop[j] + 3*u*u*t*c1[j] + 3*u*t*t*c2[j] + t**3*end[j] for j in range(2)))
+        arm = ARMS[approach]
+        self.destination = TURNS[approach][turn]
+        exit_arm = ARMS[self.destination]
+        far = exit_arm.out_lanes - 1
+        self.exit_lane = 0 if turn not in (FAR_TURN, "straight") else far if turn == FAR_TURN else min(lane, far)
+        self.permissive = turn == FAR_TURN
+        approach_points = arm.inbound(lane, arm.stop, arm.extent)
+        exit_points = exit_arm.outbound(self.exit_lane, exit_arm.stop, exit_arm.extent)
+        stop, end = approach_points[-1], exit_points[0]
+        d0, d1 = unit(sub(stop, approach_points[-2])), unit(sub(exit_points[1], end))
+        l0, l1 = arc_controls(stop, d0, end, d1)
+        c1, c2 = add(stop, mul(d0, l0)), add(end, mul(d1, -l1))
+        curve = []
+        for i in range(1, 100):
+            t, v = i / 100, 1 - i / 100
+            curve.append(tuple(v**3 * stop[j] + 3*v*v*t*c1[j] + 3*v*t*t*c2[j] + t**3 * end[j] for j in range(2)))
+        self.points = list(approach_points) + curve + list(exit_points)
         self.distance = [0.0]
         for a, b in zip(self.points, self.points[1:]):
             self.distance.append(self.distance[-1] + math.dist(a, b))
-        self.exit_start = self.distance[-1]
-        self.points.append(far)
-        self.distance.append(self.exit_start + math.dist(end, far))
+        first_box, first_exit = len(approach_points) - 1, len(approach_points) + len(curve)
+        self.stop = self.distance[first_box]
+        self.exit_start = self.distance[first_exit]
+        self.box_points = self.points[first_box:first_exit + 1]
         self.length = self.distance[-1]
         self.id = f"{approach}_{lane}_{turn}"
+        self.radius = min(radius(*self.box_points[i:i+3]) for i in range(len(self.box_points) - 2))
+        self.turn_speed = math.sqrt(LATERAL_ACCELERATION * self.radius)
 
-    def pose(self, s):
-        if s > self.length:
-            end=self.points[-1]
-            direction=OUTWARD[self.destination]
-            return [end[0]+direction[0]*(s-self.length),end[1]+direction[1]*(s-self.length),0.14], math.atan2(direction[1],direction[0])-math.pi/2
-        s = max(0, min(s, self.length))
-        index = min(len(self.points) - 2, max(0, bisect_right(self.distance, s) - 1))
-        a, b = self.points[index:index+2]
-        t = (s - self.distance[index]) / max(1e-9, self.distance[index+1] - self.distance[index])
-        x, y = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
-        # Vehicle geometry's forward axis is local +Y.
-        return [x, y, 0.14], math.atan2(b[1] - a[1], b[0] - a[0]) - math.pi / 2
+    def pose(self, s, lateral=0.0):
+        """Position `lateral` metres left of the path at arc length s, and heading (local +Y forward)."""
+        if s <= 0 or s >= self.length:
+            a, b = (self.points[0], self.points[1]) if s <= 0 else (self.points[-2], self.points[-1])
+            direction = unit(sub(b, a))
+            base = add(self.points[0] if s <= 0 else self.points[-1], mul(direction, s if s <= 0 else s - self.length))
+        else:
+            index = min(len(self.points) - 2, bisect_right(self.distance, s) - 1)
+            a, b = self.points[index:index+2]
+            t = (s - self.distance[index]) / max(1e-9, self.distance[index+1] - self.distance[index])
+            base, direction = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t), unit(sub(b, a))
+        x, y = add(base, mul(left_normal(direction), lateral))
+        return [x, y, 0.14], math.atan2(direction[1], direction[0]) - math.pi / 2
 
 
-@lru_cache(maxsize=32)
+def radius(a, b, c):
+    cross = abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+    return math.inf if cross < 1e-9 else math.dist(a, b) * math.dist(b, c) * math.dist(a, c) / (2 * cross)
+
+
+@lru_cache(maxsize=4096)
+def conflicts(a, b):
+    """Whether two routes' conflict-zone paths cross or merge. Same-lane pairs follow instead."""
+    if (a.approach, a.lane) == (b.approach, b.lane):
+        return False
+    return any(math.dist(p, q) < CONFLICT_DISTANCE for p in a.box_points[1:] for q in b.box_points[1:])
+
+
+@lru_cache(maxsize=256)
 def route_for(approach, lane, turn):
     return Route(approach, lane, turn)

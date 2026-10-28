@@ -19,7 +19,8 @@ def prepare_meshes():
                 meshes[kind, variant] = existing
                 continue
             body = material(f"Vehicle.Body.{kind}.{variant}", palettes[variant] if kind == "car" else
-                            {"bus": (0.92, 0.55, 0.07), "truck": (0.19, 0.5, 0.43), "motorcycle": (0.72, 0.15, 0.24)}[kind], metallic=0.35, roughness=0.28)
+                            {"bus": (0.92, 0.55, 0.07), "truck": (0.19, 0.5, 0.43), "motorcycle": (0.72, 0.15, 0.24),
+                             "auto": (0.95, 0.78, 0.08)}[kind], metallic=0.35, roughness=0.28)
             vertices, faces, indices = [], [], []
             def box(center, size, mat_index):
                 x, y, z = center
@@ -34,6 +35,17 @@ def prepare_meshes():
                 box((0,-0.2,1.0),(0.5,0.45,0.7),0)  # stylized rider
                 for y in (-length*0.35,length*0.35):
                     box((0,y,0.28),(0.22,0.5,0.55),2)
+            elif kind == "auto":
+                # Auto-rickshaw: low tub, canopy on pillars, one front and two rear wheels.
+                box((0,0,0.55),(width,length*0.9,0.55),0)
+                box((0,0.05,1.62),(width*1.02,length*0.8,0.12),1)
+                for x in (-width*0.46,width*0.46):
+                    for y in (-length*0.36,length*0.3):
+                        box((x,y,1.2),(0.06,0.06,0.75),0)
+                box((0,length*0.38,0.25),(0.18,0.45,0.45),2)
+                for x in (-width*0.45,width*0.45):
+                    box((x,-length*0.3,0.25),(0.18,0.45,0.45),2)
+                box((0,length/2,0.7),(0.35,0.05,0.18),3)
             else:
                 box((0,0,height*0.35),(width,length,height*0.45),0)
                 cabin_length = length*0.85 if kind == "bus" else length*0.58 if kind == "car" else length*0.30

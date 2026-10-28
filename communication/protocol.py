@@ -1,8 +1,8 @@
 import json
 import re
 from simulation.config import Config, number
-from simulation.lane import APPROACHES
-from simulation.traffic_signal import STAGES
+from simulation.lane import APPROACHES, LANES
+from simulation.traffic_signal import STAGES, groups_for
 from simulation.vehicle import TYPES
 
 MAX_BYTES = 512 * 1024
@@ -49,23 +49,18 @@ def validate_state(state):
         signals = state["signals"]
         if signals["stage"] not in STAGES or set(signals["groups"]) != set(APPROACHES):
             raise ValueError("Invalid signals")
-        expected = {a: "RED" for a in APPROACHES}
-        if signals["stage"][:2] in {"NS", "EW"}:
-            color = signals["stage"].split("_")[1]
-            for a in signals["stage"][:2]:
-                expected[a] = color
-        if signals["groups"] != expected:
+        if signals["groups"] != groups_for(signals["stage"]):
             raise ValueError("Signal groups contradict authoritative phase")
         for key in ("elapsed", "remaining"):
             if not 0 <= number(signals[key], key) <= 100000:
                 raise ValueError("Invalid signal timer")
         vehicles = state["vehicles"]
-        if not isinstance(vehicles, dict) or len(vehicles) > 200:
+        if not isinstance(vehicles, dict) or len(vehicles) > 600:
             raise ValueError("Too many vehicles")
         for entity_id, v in vehicles.items():
             if not re.fullmatch(r"veh_\d{6,9}", entity_id) or v["id"] != entity_id or v["type"] not in TYPES:
                 raise ValueError("Invalid vehicle identity/type")
-            if (v["lane"] not in {f"{a}_{i}" for a in APPROACHES for i in range(2)}
+            if (v["lane"] not in {lane.id for lane in LANES}
                     or v["turn"] not in {"left", "right", "straight"}
                     or v["destination"] not in APPROACHES or type(v["admitted"]) is not bool):
                 raise ValueError("Invalid lane/route")
@@ -81,7 +76,7 @@ def validate_state(state):
             for key in ("heading", "speed", "acceleration", "length", "progress", "distance_to_stop", "waiting_time"):
                 if abs(number(v[key], key)) > 100000:
                     raise ValueError(f"Invalid {key}")
-            if v["speed"] < 0 or v["length"] <= 0 or v["waiting_time"] < 0:
+            if v["speed"] < 0 or v["length"] <= 0 or v["waiting_time"] < 0 or v.get("sub_lane", 0) not in (-1, 0, 1):
                 raise ValueError("Invalid vehicle sensor")
         metrics = state["metrics"]
         for key in ("queue_total", "active_vehicles", "completed", "mean_speed", "mean_wait", "throughput_vph"):

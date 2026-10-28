@@ -1,8 +1,12 @@
 # Nexus — Real-Time Traffic Signal Digital Twin
 
-A functional four-way urban intersection with **external Python traffic physics**, authoritative
-signal phases, **WebSocket synchronization**, a procedural Blender scene, and a working browser
-control dashboard. Vehicle movement is computed at runtime, not keyframed.
+A digital twin of a **real signalized junction: 120 Feet Ring Road × Drive-in Road, Navrangpura,
+Ahmedabad** (23.0427 N, 72.5491 E). Road geometry, carriageway layout and surrounding buildings
+come from **OpenStreetMap**. It has **external Python traffic physics** for Indian mixed,
+left-hand traffic, authoritative split-phase signals, **WebSocket synchronization**, a Blender
+scene generated from the map, and a working browser control dashboard. Demand follows an
+Ahmedabad time-of-day profile, and can optionally be driven live from TomTom real-time speeds.
+Vehicle movement is computed at runtime, not keyframed.
 
 ![Intersection](artifacts/intersection.png)
 ![Intersection detail](artifacts/intersection_detail.png)
@@ -108,11 +112,17 @@ and objects are preserved. Rebuilding twice does not accumulate scene objects.
 
 ## What to observe
 
-- Four approaches, **two inbound and two outbound lanes each**, right-hand traffic.
-- Lane dividers, centerlines, directional arrows, stop lines, zebra crossings, curbs, sidewalks,
-  buildings, landscaping, streetlights, and four three-lamp signal heads.
-- Cars, buses, trucks, and motorcycles accelerate, brake, queue, turn, cross, and leave the network.
-- The **inner inbound lane** carries straight/left routes; the **outer lane** carries straight/right.
+- The real junction from OpenStreetMap: 120 Feet Ring Road (bearings 30° / 195°, 3 + 3 lanes)
+  crossing Drive-in Road (119° / 305°, 2 + 2 lanes), both divided by a kerbed median. Arms are
+  labelled N/E/S/W by nearest compass bearing; the roads are not on a right-angle grid.
+- **Left-hand traffic.** Left turns are the short near-side turn (and may go on red, "free left");
+  right turns cross oncoming traffic.
+- **Split phasing:** each arm gets its own green in clockwise order N → E → S → W, with 3 s amber and
+  2 s all-red (IRC:93), as is typical at Ahmedabad signals.
+- **Indian mixed traffic:** two-wheelers (~62%), cars, auto-rickshaws, buses and trucks.
+  Two-wheelers ride in half-lane strips, so they filter up beside each other to the stop line.
+- Lane markings, stop lines, zebra crossings, kerbs, footpaths, median streetlights, four signal
+  heads at the real stop lines, and 106 OSM building footprints extruded to height.
 - Vehicle meshes, signal lamps, queue labels, phase countdown, clock, and metrics follow incoming
   simulation snapshots. There are no vehicle animation keyframes.
 - `TR.camera` is the complete overview. `TR.camera.detail` is a closer junction observer.
@@ -126,17 +136,56 @@ bpy.context.scene.camera = bpy.data.objects['TR.camera']
 
 ### Demonstrate a real timing change
 
-1. **Reset**, set **NS green = 5 s**, **EW green = 40 s**, and **Time scale = 5×**; click Apply.
-2. Click Start. NS serves first, followed by 3 s yellow and 1 s all-red, then EW serves.
-3. Watch the same phase/lamp changes in the browser map and Blender. EW vehicles receive entry
-   reservations, accelerate, and cross; red-side queues remain behind their stop lines.
-4. Increase East demand to **900 vehicles/h**. New arrivals increase according to that rate;
-   congestion and approach queue metrics change. Reduce it to zero to stop future arrivals.
+1. **Reset**, set **N / S arm green = 5 s**, **E / W arm green = 40 s**, and **Time scale = 5×**; click Apply.
+2. Click Start. N serves first, then 3 s amber and 2 s all-red, then E, S and W in turn.
+3. Watch the same phase/lamp changes in the browser map and Blender.
+4. Change **Start time** to 03:00 and back to 10:30 to see night and morning-peak demand, or set
+   **Demand source = Manual** and type your own vehicles/hour per arm.
 5. Pause freezes **both vehicles and signal timers**. Resume continues from the same state.
    Stop freezes the current state; Start continues it. Reset is the operation that restarts time.
 
-The configuration file defaults to **25 s green per phase, 3 s yellow, 1 s all-red**. Screenshots
-use a shorter 12/12 s demonstration plan. These are demonstration values, not timing recommendations.
+## Real data: sources, assumptions and how to replace them
+
+| Input | Source | Status |
+|---|---|---|
+| Road alignment, divided carriageways, one-way structure, buildings | OpenStreetMap (cached in `data/osm/navrangpura_raw.json`, ODbL) | Real |
+| Lane counts, median width | OSM has no lane tags here; 3 + 3 lanes on Ring Road (120 ft right of way), 2 + 2 on Drive-in Road, 1.2 m median, in `data/osm/navrangpura_overrides.json` | **Estimate: verify on satellite imagery** |
+| Stop-line positions | Computed from crossing road widths + 4 m zebra crossing | Derived |
+| Hourly demand shape | Morning and evening peaks; peak hour 8.4% of daily traffic, from published Ahmedabad arterial counts (8.5–11%) | Published basis |
+| Daily volume per arm | 20,000 (Ring Road) / 9,000 (Drive-in Road) inbound vehicles per day in `data/demand/navrangpura.json` | **Estimate: no published count for this junction** |
+| Fleet mix, PCU | ~62% two-wheelers (~70% city-wide); PCU car 1.0, two-wheeler 0.5, bus/truck 3.5, auto 1.0 (assumed) | Published basis + assumption |
+| Saturation flow | IRC `525 × approach width` PCU/h; model calibrated to 98% (time headway 1.2 s) | Calibrated |
+| Live conditions | TomTom Traffic Flow speeds on each approach, when `TOMTOM_API_KEY` is set | Optional live |
+
+Street View imagery is not used: Google's terms do not allow deriving models from it.
+
+**Use your own counts (the strongest improvement).** Count vehicles entering from each arm, by
+hour, for example from a phone video. Then either set `daily_inbound`, or replace
+`"hourly_inbound": null` with 24 hourly values per arm in `data/demand/navrangpura.json`.
+`TRAFFIC_DEMAND=/path/file.json` selects a different profile.
+
+**Fix lanes and medians** in `data/osm/navrangpura_overrides.json` (keys per arm: `in_lanes`,
+`out_lanes`, `median`, `lane_width`, `name`), then run `.venv/bin/python tools/import_osm.py`.
+
+**Model a different junction:**
+
+```bash
+.venv/bin/python tools/import_osm.py --fetch --lat 23.0225 --lon 72.5714 --name mine --title "My junction"
+```
+
+This downloads the junction from the Overpass API and writes `config/junction.json`. 3- and
+4-arm junctions are supported. Check the printed lanes, add an overrides file, rebuild the
+Blender scene with `--rebuild`, and supply a matching demand profile.
+
+**Live mode.** Create a free TomTom developer key, then
+`TOMTOM_API_KEY=... .venv/bin/python run.py`, and choose **Demand source = Live speeds** on the
+dashboard. Every 2 minutes the server samples the current and free-flow speed 60 m upstream on
+each approach. It reads the speed drop as a degree of saturation, using
+`free/current = 1 + x²`, and sets demand = `x × capacity`, where capacity is the IRC saturation
+flow × green / cycle of the current plan. It also sets the desired speed to the measured
+free-flow speed. These updates go through the normal command path, so they are logged in
+`artifacts/commands.jsonl` and replayable. This is an estimate from speeds, not a vehicle count:
+Ahmedabad publishes no open live counts.
 
 ## Architecture and ownership
 
@@ -173,7 +222,7 @@ deterministic replay mechanism.
 
 ```text
 blender/
-  scene_builder.py       Roads, city environment, collections, cameras, signals
+  scene_builder.py       Real roads, OSM buildings, collections, cameras, signals
   traffic_controller.py  WS worker, latest-state queue, ordering, bpy timer
   vehicle_renderer.py    Linked type/color meshes and stable vehicle objects
   signal_renderer.py     Separate red/yellow/green on/off lamp materials
@@ -187,6 +236,9 @@ simulation/
   vehicle.py             Vehicle types, state, and IDM equation
   traffic_signal.py      Authoritative NS/EW phase state machine
   intersection.py        Entry reservations and receiving-lane checks
+  junction.py            Real junction geometry (config/junction.json), turns, lane permissions
+  geometry.py            Polyline offset/resample helpers shared with Blender
+  demand.py              Time-of-day demand profile (data/demand/)
   lane.py                Approach/lane geometry and coordinate constants
   routing.py             Straight/left/right arc-length paths
   traffic_metrics.py     Queues, stop time, speed, throughput
@@ -197,6 +249,10 @@ communication/
 dashboard/               HTML, CSS, JavaScript, actual live map and charts
 config/intersection.json Initial SI configuration
 tests/                   pytest, headless Blender, real browser, launcher checks
+tools/import_osm.py      OpenStreetMap junction importer -> config/junction.json
+data/osm/                Cached OSM download and manual lane/median overrides
+data/demand/             Time-of-day demand profile with sources
+communication/live_traffic.py  Optional TomTom live-speed demand feed
 run_simulation.py        Independent external simulation entry point
 run.py                   One-command process supervisor
 requirements.txt         External dependencies
@@ -217,82 +273,96 @@ comfortable braking, and `a` a type-specific acceleration. Acceleration is bound
 −8 m/s² and the vehicle's acceleration capability. A stopped virtual leader represents a
 red/yellow signal or an unavailable conflict-zone reservation.
 
-The fixed-step, semi-implicit update calculates all vehicles from the same old-state snapshot
-in stable ID order, then applies updates. A hard non-penetration constraint limits advance to
-the available old-state gap minus the minimum gap. This conservative guard can override the
-nominal acceleration when necessary. Vehicles never reverse. Increasing the minimum gap does
+The fixed-step ballistic update (`Δs = (v + v')/2 · Δt`; a vehicle that would reverse stops
+exactly within the step) calculates all vehicles from the same old-state snapshot in stable ID
+order, then applies updates. A hard non-penetration constraint limits advance to the available
+old-state gap minus the minimum gap and caps speed at the leader's. This conservative guard can
+override the nominal acceleration when necessary. Vehicles never reverse.
+
+Leaders are found on the same route anywhere (including inside the conflict zone), in the same
+incoming lane until same-lane paths diverge 8 m past the stop line, and in the shared receiving
+lane after merging. Each driver has an individual desired-speed factor (normal, σ = 7%, clipped
+to ±15%); trucks and buses additionally use 90% and 85% of the configured desired speed. Increasing the minimum gap does
 not teleport an existing queue; it waits for new space before advancing.
 
-Type dimensions/capabilities (`length × width × height`, metres; acceleration m/s²):
+Type dimensions/capabilities (`length × width × height`, metres; acceleration m/s²). Two-wheelers
+and autos use smaller standstill gaps and headways (gap ×0.5 / ×0.8, headway ×0.6 / ×0.9):
 
-| Type | Dimensions | Acceleration |
-|---|---|---|
-| Car | 4.5 × 1.85 × 1.45 | 2.2 |
-| Bus | 10.5 × 2.5 × 3.1 | 1.1 |
-| Truck | 8.0 × 2.4 × 2.8 | 1.2 |
-| Motorcycle | 2.2 × 0.8 × 1.2 | 2.8 |
+| Type | Dimensions | Acceleration | Share | PCU |
+|---|---|---|---|---|
+| Two-wheeler (`motorcycle`) | 1.9 × 0.75 × 1.3 | 2.6 | 62% | 0.5 |
+| Car | 4.2 × 1.75 × 1.5 | 2.2 | 20% | 1.0 |
+| Auto-rickshaw (`auto`) | 3.2 × 1.4 × 1.75 | 1.5 | 12% | 1.0 |
+| Bus | 12.0 × 2.6 × 3.2 | 1.0 | 3% | 3.5 |
+| Truck | 7.5 × 2.3 × 2.8 | 1.1 | 3% | 3.5 |
 
-Turning vehicles use a 6 m/s cornering target. Routes combine straight entry/exit segments and
-100-sample cubic Bézier turn paths, indexed by arc length. Vehicles are removed when their rear
-has passed the exit boundary. There is no lane changing or overtaking; routes remain fixed for
-each vehicle. Crosswalks are modeled geometry, not a pedestrian simulation.
+Two-wheelers ride in half-lane strips (0.85 m either side of the lane centre). They follow only
+vehicles in their strip or full-width vehicles, so two can wait side by side and filter to the
+front of a queue. Riders keep to the side of their turn.
+
+Lanes are offset from the real OSM road axis. The kerb lane carries left + straight, the median
+lane right + straight, and middle lanes straight only. Turn paths are cubic Béziers fitted as
+circular arcs between the real approach and exit tangents: left 4.4–13 m radius, right 9–22 m.
+Each turn's speed limit is `sqrt(a_lat × R)` with a comfortable lateral acceleration of 2.5 m/s².
+Drivers decelerate toward it at 1.5 m/s² before the curve. Vehicles are posed with front and rear
+axles both on the path, so long vehicles off-track inside a curve. Approaches are modelled 120 m
+out from the junction centre. There is no lane changing; crosswalks are geometry, not a
+pedestrian simulation.
 
 ### Signal phases and safe entry
 
 ```text
-NS_GREEN → NS_YELLOW → ALL_RED_TO_EW → EW_GREEN → EW_YELLOW → ALL_RED_TO_NS → repeat
+N_GREEN → N_YELLOW → ALL_RED_TO_E → E_GREEN → … → W_YELLOW → ALL_RED_TO_N → repeat
 ```
 
-Reset starts at **NS_GREEN**, elapsed **0**, simulation mode **stopped**, and zero vehicle speeds.
-Minimum/maximum green bounds are validated with each update. Shortening an already-running green
-expires that green on the next simulation step **without skipping the yellow or all-red clearance**.
-This edge case has a dedicated regression test.
+The phase plan comes from `config/junction.json` (split phasing, clockwise by bearing).
+`green_ns` times the N and S phases, `green_ew` the E and W phases. The default cycle is
+2 × 40 + 2 × 30 + 4 × 5 = 160 s. Reset starts at **N_GREEN**, elapsed **0**, simulation mode
+**stopped**. Shortening an already-running green expires it on the next step **without skipping
+amber or all-red**.
 
-**Important model choice:** compatible NS or EW greens enable requests, but the conflict zone
-has an **exclusive reservation**. Only one vehicle may occupy it at a time. Receiving-lane
-space is checked, the leading vehicle in each lane is eligible, and longest-wait-first arbitration
-breaks ties by stable ID. The owner is retained until the vehicle's rear clears its exit plus 1 m.
-This protects opposing turns and merges, but deliberately gives lower capacity than a calibrated
-multi-conflict-zone road model. A green light does not imply immediate entry if another vehicle
-is still clearing the box. Existing reservations continue through yellow/red to clear safely.
+**Conflict-matrix reservations:** a green enables requests, and entry requires a reservation.
+Two routes conflict when their conflict-zone paths come within 3 m of each other (crossings and
+merges), precomputed from the real geometry. All of one arm's movements are mutually compatible,
+so under split phasing an arm discharges all its lanes at once. A vehicle reserves within
+`7 + s0 + vT + v²/5` m of the line. Facing a green, it does not brake for the stop line until
+it is that close and has been refused. The first not-yet-reserved vehicle in each lane strip is
+eligible. Priority movements are served before permissive ones, then longest wait, then stable
+ID. Receiving-lane space is checked.
 
-Yellow policies:
-- `stop` (default): no new yellow entries; already committed vehicles continue.
-- `clear_if_unavoidable`: a vehicle unable to stop within `v²/(2b)` may request a yellow entry,
-  but must still obtain the exclusive reservation. Otherwise the hard stop-line guard applies.
+**Permissive and free turns:** right turns (and free left turns made on red, `free_left`) yield
+to conflicting priority traffic. They accept a gap only when every such vehicle is at least
+`max(4.5 s, own time-to-line + 3 s)` away (HCM critical gap 4.1–5.0 s). A right turner waiting at
+the line may clear on amber.
+
+**Amber onset:** a reserved vehicle that can still stop at ≤ 3 m/s² gives up its reservation.
+Yellow policies: `stop` (default) admits no new entries on amber; `clear_if_unavoidable` admits
+a vehicle that cannot stop comfortably, if it can get a non-conflicting reservation.
 
 ### Demand and metrics
 
-Arrival credits accumulate at `approach_demand / 7200` vehicles/s **per inbound lane**, dividing
-each approach's demand equally over its two lanes. Arrivals are deterministic, not random motion.
-The seed shifts a repeatable vehicle-type/turn sequence. Turn ratios apply to new vehicles, with
-left/right restricted to their compatible lanes. Each ratio is 0–50%, with total <=90%.
-Entry space and the vehicle cap are enforced; excess arrivals are counted as blocked backpressure.
+Arrivals are **Poisson** per arm at the current demand. Demand comes from the time-of-day profile
+(simulated clock = `start_hour` + elapsed time), the manual `demand_*` fields, or the live feed.
+Each arrival draws a vehicle type, a turn (left/right ratios) and a driver speed factor
+(σ = 7%), then joins the least-occupied lane serving its turn. It enters at the fastest speed
+the IDM accepts without braking harder than 3 m/s². Up to 6 arrivals per arm wait at the network
+edge; beyond that they count as blocked. Seeds make runs reproducible.
 
-- Queue count: inbound vehicles moving below **0.5 m/s**.
-- Queue length: longest stopped queue's tail distance to that approach's stop line.
-- Waiting time: accumulated inbound time below 0.5 m/s; mean includes active and completed trips.
-- Throughput: completed trips ×3600 / elapsed simulation time (initial-queue warm-up affects it).
-- History: 1200 bounded samples, approximately 0.5 simulated seconds apart; reset clears it.
-
-The default 300 vehicles/h per approach can exceed this conservative junction's capacity,
-making congestion visible. It is a configurable synthetic traffic model, not a calibrated feed
-from a particular real intersection. A sensor adapter can supply demand/control changes through
-the same WebSocket protocol.
+- Queue count/length/waiting time: inbound vehicles below **0.5 m/s**, per arm.
+- Throughput: completed vehicles/h and **PCU/h** (`pcu_throughput_pch`).
+- `demand_vph`: current arrival rate per arm; `clock_hour`: simulated local time.
 
 ## Configuration and coordinates
 
-All internal lengths are **metres**, times **seconds**, speeds **m/s**, headings **radians**,
-and demand **vehicles/hour/approach**. Blender and simulation share the same right-handed XY
-plane with **Z up**: +X East, +Y North; **1 Blender unit = 1 m**. Vehicle mesh forward is local +Y,
-so Blender Z yaw is `atan2(dy, dx) - π/2`. No axis flip or scaling conversion is needed.
-Lane width is 3.2 m, entry/exit boundary 65 m from center, stop line 11 m from center.
+All internal lengths are **metres**, times **seconds**, speeds **m/s**, headings **radians**. The
+local frame is centred on the junction (OSM coordinates projected to metres): +X East, +Y North,
+**Z up**, **1 Blender unit = 1 m**. Vehicle mesh forward is local +Y, so Blender Z yaw is
+`atan2(dy, dx) - π/2`. `/api/junction` serves the geometry to the dashboard.
 
 Stable mappings:
 - Vehicle `veh_000001` → `TR.veh_000001`, with `entity_id` custom property.
 - Signal group `N` → `TR.signal.N.RED`, `.YELLOW`, `.GREEN`, with group/identity properties.
-- `TR | 06 Live Vehicles` contains only managed vehicle objects. Type/color meshes are shared,
-  created once, and reused. Objects are added/removed only when population changes.
+- `TR | 06 Live Vehicles` contains only managed vehicle objects. Type/color meshes are shared.
 - Scene properties expose `traffic_connected`, `traffic_sequence`, `traffic_session`,
   `traffic_time`, `traffic_phase`, `traffic_error`, and `traffic_missing_signals`.
 
@@ -302,17 +372,20 @@ Stable mappings:
 |---|---|---|
 | Timestep | 0.1 s | 0.02–0.2 s |
 | Simulation speed | 2× | 0.1–20× |
-| NS / EW green | 25 / 25 s | Between configured min/max green |
+| N/S arm green, E/W arm green | 40 / 30 s | Between configured min/max green |
 | Min / max green | 5 / 90 s | 3–60 / 5–120 s |
-| Yellow / all-red | 3 / 1 s | 2–6 / 0.5–5 s |
-| Each approach demand | 300 veh/h | 0–1800 |
-| Desired speed | 13.9 m/s | 3–20 m/s; dashboard displays km/h |
-| Minimum gap / headway | 2 m / 1.3 s | 1–5 m / 0.8–3 s |
-| Left / right ratio | 25 / 25% | Each 0–50%; sum <=90%; new arrivals |
+| Amber / all-red | 3 / 2 s | 2–6 / 0.5–5 s |
+| Demand source | `profile` | `profile` / `manual` / `live` |
+| Start time | 9.5 h | 0–23.99 (simulated local time at reset) |
+| Each arm demand (manual/live) | 900 / 900 / 500 / 500 veh/h | 0–4000 |
+| Desired speed | 11.1 m/s (40 km/h) | 3–20 m/s; dashboard displays km/h |
+| Minimum gap / headway | 1.5 m / 1.2 s | 1–5 m / 0.8–3 s (car values) |
+| Left / right ratio | 20 / 20% | Each 0–50%; sum <=90%; new arrivals |
+| Free left turn | on | Left turn on red after yielding |
 | Yellow policy | `stop` | `stop` / `clear_if_unavoidable` |
-| Population cap | 160 | 24–200; gates new entries, doesn't delete existing vehicles |
+| Population cap | 400 | 24–600 |
 | Seed | 42 | Integer 0–1,000,000; latched on reset |
-| Initial queue per lane | 3 | Integer 0–4; next reset; must fit population cap |
+| Initial queue per lane | 2 | Integer 0–4; next reset; must fit population cap |
 
 Parameter changes are atomic. Booleans as numbers, strings, infinities, NaN, invalid bounds,
 unknown keys, or contradictory green limits are rejected. Reset retains current configuration,
@@ -441,12 +514,13 @@ because a blocking background script doesn't run Blender's interactive event loo
   not register a live timer. The server must also be running.
 - **Blender offline:** check `/api/health`, confirm the `ws://` URL and port, and wait for retry.
   A blocked Blender main thread cannot acknowledge applied states even if its socket is alive.
-- **Green but queued:** another vehicle may own the protected conflict-zone reservation, or the
-  receiving lane may be occupied. Inspect the dashboard's reservation line.
+- **Green but queued:** a conflicting vehicle may hold a reservation, a permissive left turner
+  may be waiting for a gap at the head of the shared left/through lane, or the receiving lane
+  may be occupied. Inspect the dashboard's reservation line.
 - **Timing update rejected:** make both greens consistent with min/max bounds; all form fields
   are sent atomically. Read the dashboard's specific error text.
-- **Delayed new demand:** arrivals use deterministic credits, so a lower rate takes time to
-  accumulate a vehicle. Existing queues don't disappear when demand is set to zero.
+- **Irregular arrivals:** arrivals are Poisson-random, so platoons and gaps occur naturally even
+  at constant demand. Existing queues don't disappear when demand is set to zero.
 - **Missing signals:** inspect `traffic_missing_signals` and health's `missing_signals`; rebuild
   the scene or restore the stable lamp names. Deleted vehicle objects recover automatically.
 - **Package imports resolve to another project:** launch fresh Blender from this project's script.

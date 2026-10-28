@@ -1,0 +1,18 @@
+{
+ "junction": "120 Feet Ring Road x Drive-in Road, Navrangpura, Ahmedabad",
+ "status": "ESTIMATE - no published turning-movement count exists for this junction. Replace daily_inbound (or supply hourly_inbound) with your own counts.",
+ "daily_inbound": {"N": 20000, "S": 20000, "E": 9000, "W": 9000},
+ "hourly_share": [0.6, 0.4, 0.3, 0.3, 0.4, 0.9, 1.8, 3.2, 5.0, 7.0, 8.6, 7.6, 6.2, 5.6, 5.4, 5.6, 6.2, 7.4, 8.4, 8.2, 6.0, 3.8, 2.2, 1.2],
+ "hourly_inbound": null,
+ "basis": [
+  "Peak-hour share 8.4% of daily traffic: Ahmedabad Metro DPR classified counts report 8.5-11% peak-hour shares on city arterials (e.g. K.G. Road 96,115 veh/day, 5,458 PCU peak hour).",
+  "Morning and second evening peak: one-year Ahmedabad traffic observation (SciTePress 2021).",
+  "Daily volumes: assumed for a primary 6-lane divided arterial (120 Feet Ring Road) and a 4-lane secondary (Drive-in Road), sized so the peak hour is close to, not far beyond, split-phase capacity.",
+  "Fleet mix (simulation/vehicle.py): ~62% two-wheelers on this arterial; ~70% city-wide."
+ ],
+ "sources": [
+  "https://gidb.org/pdf/5_Ch2_Traffic_Demand.pdf",
+  "https://www.scitepress.org/Papers/2021/104446/pdf/index.html",
+  "https://granthaalayahpublication.org/ijetmr-ojms/ijetmr/article/view/IJETMR21_A03_2555/746"
+ ]
+}

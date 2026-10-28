@@ -1,15 +1,23 @@
-"""Procedural right-hand-traffic urban intersection, SI coordinates shared with model."""
+"""Real junction scene from OpenStreetMap geometry (config/junction.json), SI coordinates shared with model."""
 import math
 import bpy
 from mathutils import Vector
 from blender.materials import enum, function_enum, material
-from simulation.lane import APPROACHES, OUTWARD, LANE_WIDTH, ROAD_HALF_WIDTH
+from simulation.geometry import offset, point_at, resample
+from simulation.junction import ARMS, DATA, LEFT_HAND
 
-SCENE_NAME = "Traffic Digital Twin | Four-way Junction"
+SCENE_NAME = "Traffic Digital Twin | " + DATA["name"]
 VEHICLES_COLLECTION = "TR | 06 Live Vehicles"
 
 
 def build_scene():
+    # Earlier twin scenes (another junction) would hold the stable object names; retire them.
+    for stale in [s for s in bpy.data.scenes if s.name.startswith("Traffic Digital Twin | ") and s.name != SCENE_NAME]:
+        for obj in list(stale.objects):
+            if obj.get("traffic_owned"):
+                bpy.data.objects.remove(obj, do_unlink=True)
+        if len(bpy.data.scenes) > 1:
+            bpy.data.scenes.remove(stale)
     scene = bpy.data.scenes.get(SCENE_NAME) or bpy.data.scenes.new(SCENE_NAME)
     if bpy.context.window:
         bpy.context.window.scene = scene
@@ -82,101 +90,123 @@ def build_scene():
             obj.rotation_euler.x = math.pi/2
         return obj
 
-    cube("site.plinth", (0,0,-1.1), (150,150,2.2), dark, "00 Site", 1.1)
-    cube("site.paving", (0,0,-0.12), (148,148,0.28), concrete, "00 Site")
-    w,c,L = ROAD_HALF_WIDTH,11,73
-    outline = [(-w,-L),(w,-L),(w,-c),(c,-c),(c,-w),(L,-w),(L,w),(c,w),(c,c),(w,c),(w,L),(-w,L),(-w,c),(-c,c),(-c,w),(-L,w),(-L,-w),(-c,-w),(-c,-c),(-w,-c)]
-    mesh = bpy.data.meshes.new("TR.RoadSurface")
-    mesh.from_pydata([(x,y,0.06) for x,y in outline], [], [tuple(range(len(outline)))])
-    road = bpy.data.objects.new("TR.roads",mesh)
-    own(road,"roads","01 Roads",asphalt)
-    # Raised sidewalks follow each road arm, with tactile curb edges.
-    for approach in APPROACHES:
-        nx,ny = OUTWARD[approach]
-        dx,dy = -nx,-ny
-        rx,ry = dy,-dx
-        for side in (-1,1):
-            center = (nx*42+rx*8.1*side,ny*42+ry*8.1*side,0.14)
-            size = (3.2,62,0.22) if nx==0 else (62,3.2,0.22)
-            cube(f"sidewalk.{approach}.{side}",center,size,concrete,"01 Roads",0.08)
-            curb = (nx*42+rx*6.55*side,ny*42+ry*6.55*side,0.23)
-            cube(f"curb.{approach}.{side}",curb,(0.18,62,0.28) if nx==0 else (62,0.18,0.28),white,"01 Roads")
-        # Double yellow centerline, dashed lane separators and edge boundaries.
-        for offset in (-0.14,0.14):
-            position = (nx*42+rx*offset,ny*42+ry*offset,0.075)
-            cube(f"centerline.{approach}.{offset}",position,(0.10,62,0.014) if nx==0 else (62,0.10,0.014),yellow,"02 Markings")
-        for offset in (-3.2,3.2):
-            for j,distance in enumerate(range(15,72,6)):
-                cube(f"lane.{approach}.{offset}.{j}",(nx*distance+rx*offset,ny*distance+ry*offset,0.077),
-                     (0.12,3,0.015) if nx==0 else (3,0.12,0.015),white,"02 Markings")
-        # Stop line only across the approaching half, 11 m from intersection center.
-        cube(f"stopline.{approach}",(nx*11+rx*3.2,ny*11+ry*3.2,0.08),
-             (6.1,0.38,0.02) if nx==0 else (0.38,6.1,0.02),white,"02 Markings")
-        for j in range(10):
-            lateral = -5.85+j*1.3
-            cube(f"crosswalk.{approach}.{j}",(nx*8.6+rx*lateral,ny*8.6+ry*lateral,0.08),
-                 (0.75,2.4,0.02) if nx==0 else (2.4,0.75,0.02),white,"02 Markings")
-        for lane in range(2):
-            lateral=(lane+0.5)*LANE_WIDTH
-            position=Vector((nx*27+rx*lateral,ny*27+ry*lateral,0.09))
-            shaft=cube(f"arrow.shaft.{approach}.{lane}",position,(0.22,3.5,0.02),white,"02 Markings")
-            yaw=math.atan2(dy,dx)-math.pi/2
-            shaft.rotation_euler.z=yaw
-            arrowmesh=bpy.data.meshes.new(f"TR.Arrow.{approach}.{lane}")
-            tip=position+Vector((dx*2.7,dy*2.7,0))
-            base=position+Vector((dx*1.2,dy*1.2,0))
-            arrowmesh.from_pydata([tip,base+Vector((rx*0.8,ry*0.8,0)),base-Vector((rx*0.8,ry*0.8,0))],[],[(0,1,2)])
-            own(bpy.data.objects.new("arrow",arrowmesh),f"arrow.head.{approach}.{lane}","02 Markings",white)
-        text("approach."+approach,approach,(nx*54+rx*9.8-1,ny*54+ry*9.8-1,0.3),2.8,teal)
-        # Signal heads sit at the near-side curb, facing their own approaching traffic.
-        px,py=nx*12+rx*7.3,ny*12+ry*7.3
-        cylinder(f"signal.pole.{approach}",(px,py,2.8),0.13,5.6,dark,"03 Signals")
-        housing=cube(f"signal.housing.{approach}",(px,py,5.2),(0.92,0.65,2.7),dark,"03 Signals",0.12)
-        housing.rotation_euler.z=math.atan2(ny,nx)-math.pi/2
+    def mesh_object(name, vertices, faces, group, mat):
+        data = bpy.data.meshes.new("TR."+name)
+        data.from_pydata(vertices, [], faces)
+        return own(bpy.data.objects.new("TR."+name, data), name, group, mat)
+
+    def ribbon(name, points, a, b, z, group, mat):
+        """Flat strip between lateral offsets a and b (left of travel direction) along a polyline."""
+        left, right = offset(points, a), offset(points, b)
+        vertices = [(x, y, z) for x, y in left] + [(x, y, z) for x, y in right]
+        n = len(points)
+        faces = [(i, i + 1, n + i + 1, n + i) for i in range(n - 1)]
+        return mesh_object(name, vertices, faces, group, mat)
+
+    def dashes(points, lateral, z, length=3.0, gap=3.0, width=0.12):
+        """Dashed lane line as quads, appended to a shared vertex/face list."""
+        total = sum(math.dist(p, q) for p, q in zip(points, points[1:]))
+        quads, s = [], 0.0
+        while s + length < total:
+            segment = offset([point_at(points, s), point_at(points, s + length)], lateral)
+            (x0, y0), (x1, y1) = segment
+            dx, dy = (x1 - x0) / length, (y1 - y0) / length
+            nx, ny = -dy * width / 2, dx * width / 2
+            quads.append([(x0 + nx, y0 + ny, z), (x1 + nx, y1 + ny, z), (x1 - nx, y1 - ny, z), (x0 - nx, y0 - ny, z)])
+            s += length + gap
+        return quads
+
+    def quads_object(name, quads, group, mat):
+        vertices = [v for quad in quads for v in quad]
+        return mesh_object(name, vertices, [tuple(range(4 * i, 4 * i + 4)) for i in range(len(quads))], group, mat)
+
+    extent = max(arm.extent for arm in ARMS.values())
+    size = 2 * extent + 24
+    cube("site.plinth", (0,0,-1.1), (size,size,2.2), dark, "00 Site", 1.1)
+    cube("site.ground", (0,0,-0.12), (size-2,size-2,0.28), grass, "00 Site")
+    lhs = 1 if LEFT_HAND else -1  # Outbound carriageway is on the left of the outward axis.
+    box = DATA["box"]
+    mesh_object("junction.box", [(x, y, 0.06) for x, y in box], [tuple(range(len(box)))], "01 Roads", asphalt)
+    for arm in ARMS.values():
+        m, inw, outw = arm.median / 2, arm.in_lanes * arm.lane_width, arm.out_lanes * arm.lane_width
+        road = resample(arm.axis, arm.stop - 4, arm.extent)
+        beyond = resample(arm.axis, arm.stop, arm.extent)
+        ribbon(f"carriageway.{arm.id}", road, lhs * (m + outw), -lhs * (m + inw), 0.06, "01 Roads", asphalt)
+        if m:
+            ribbon(f"median.{arm.id}", beyond, m, -m, 0.22, "01 Roads", concrete)
+        for side, edge in (("out", lhs * (m + outw)), ("in", -lhs * (m + inw))):
+            outer = edge + math.copysign(3.0, edge)
+            ribbon(f"footpath.{arm.id}.{side}", resample(arm.axis, arm.stop + 2, arm.extent), outer, edge, 0.17, "01 Roads", concrete)
+            ribbon(f"kerb.{arm.id}.{side}", resample(arm.axis, arm.stop + 2, arm.extent),
+                   edge + math.copysign(0.2, edge), edge, 0.19, "01 Roads", white)
+        lines = []
+        for k in range(1, arm.in_lanes):
+            lines += dashes(beyond, -lhs * (m + k * arm.lane_width), 0.075)
+        for k in range(1, arm.out_lanes):
+            lines += dashes(beyond, lhs * (m + k * arm.lane_width), 0.075)
+        if lines:
+            quads_object(f"lanes.{arm.id}", lines, "02 Markings", white)
+        stopline = resample(arm.axis, arm.stop, arm.stop + 0.45, 0.45)
+        ribbon(f"stopline.{arm.id}", stopline, -lhs * m, -lhs * (m + inw), 0.08, "02 Markings", white)
+        zebra, lateral = [], -(m + inw) + 0.4
+        while lateral < m + outw - 0.4:
+            strip = offset(resample(arm.axis, arm.stop - 3.6, arm.stop - 0.8, 2.8), lateral)
+            (x0, y0), (x1, y1) = strip
+            dx, dy = (x1 - x0) / 2.8, (y1 - y0) / 2.8
+            nx, ny = -dy * 0.25, dx * 0.25
+            zebra.append([(x0+nx, y0+ny, 0.08), (x1+nx, y1+ny, 0.08), (x1-nx, y1-ny, 0.08), (x0-nx, y0-ny, 0.08)])
+            lateral += 1.0
+        quads_object(f"crosswalk.{arm.id}", zebra, "02 Markings", white)
+        label = point_at(arm.axis, arm.extent - 10)
+        side = offset([point_at(arm.axis, arm.extent - 11), label], -lhs * (m + inw + 4.5))[1]
+        text("approach."+arm.id, f"{arm.id}  {arm.name.upper()}", (side[0], side[1], 0.3), 2.4, teal)
+        # Signal heads stand on the near-side kerb at the stop line, facing approaching traffic.
+        px, py = offset(resample(arm.axis, arm.stop, arm.stop + 1, 1), -lhs * (m + inw + 1.2))[0]
+        nx, ny = arm.outward
+        cylinder(f"signal.pole.{arm.id}", (px,py,2.8), 0.13, 5.6, dark, "03 Signals")
+        housing = cube(f"signal.housing.{arm.id}", (px,py,5.2), (0.92,0.65,2.7), dark, "03 Signals", 0.12)
+        housing.rotation_euler.z = math.atan2(ny,nx)-math.pi/2
         for color,z in (("RED",6.02),("YELLOW",5.2),("GREEN",4.38)):
-            lamp=sphere(f"signal.{approach}.{color}",(px+nx*0.39,py+ny*0.39,z),0.32,dark,"03 Signals")
-            lamp["signal_group"]=approach
-            lamp["entity_id"]=f"signal_{approach}_{color}"
-        for distance in (24,55):
-            lx,ly=nx*distance+rx*8.4,ny*distance+ry*8.4
-            cylinder(f"streetlight.{approach}.{distance}",(lx,ly,4),0.09,8,dark)
-            cube(f"streetlight.arm.{approach}.{distance}",(lx-rx,ly-ry,7.9),(2.3,0.13,0.13) if nx==0 else (0.13,2.3,0.13),dark)
-            cube(f"streetlight.head.{approach}.{distance}",(lx-rx*2,ly-ry*2,7.8),(0.8,0.8,0.15),white)
+            lamp = sphere(f"signal.{arm.id}.{color}", (px+nx*0.39,py+ny*0.39,z), 0.32, dark, "03 Signals")
+            lamp["signal_group"] = arm.id
+            lamp["entity_id"] = f"signal_{arm.id}_{color}"
+        # Median streetlights, as on Ahmedabad's divided arterials.
+        for distance in range(int(arm.stop) + 10, int(arm.extent), 30):
+            lx, ly = point_at(arm.axis, distance)
+            cylinder(f"streetlight.{arm.id}.{distance}", (lx,ly,4.2), 0.09, 8, dark)
+            for sign in (-1, 1):
+                ox, oy = offset([point_at(arm.axis, distance), point_at(arm.axis, distance + 1)], sign * 1.4)[0]
+                cube(f"streetlight.head.{arm.id}.{distance}.{sign}", (ox,oy,8.1), (0.9,0.5,0.15), white)
+        # Queue instrument beside each arm's footpath.
+        qx, qy = offset([point_at(arm.axis, 55), point_at(arm.axis, 56)], -lhs * (m + inw + 6))[0]
+        text("text.queue."+arm.id, f"{arm.id} / -- QUEUED", (qx, qy, 0.48), 1.6, teal)
+    # OpenStreetMap building footprints, extruded (OSM height/levels, else 3-6 storeys).
+    for index, building in enumerate(DATA["buildings"]):
+        footprint = building["footprint"]
+        height = building["height"] or 9 + (building["osm_id"] % 4) * 3
+        n = len(footprint)
+        vertices = [(x, y, 0.2) for x, y in footprint] + [(x, y, height) for x, y in footprint]
+        faces = [tuple(range(n - 1, -1, -1)), tuple(range(n, 2 * n))] + [(i, (i + 1) % n, n + (i + 1) % n, n + i) for i in range(n)]
+        obj = mesh_object(f"building.{index}", vertices, faces, "05 Buildings", facade_mats[building["osm_id"] % len(facade_mats)])
+        obj["osm_id"] = building["osm_id"]
 
-    for quadrant,(sx,sy) in enumerate(((-1,-1),(1,-1),(-1,1),(1,1))):
-        cube(f"plaza.{quadrant}",(sx*33,sy*33,0.18),(40,40,0.32),concrete,"04 Streetscape",0.2)
-        cube(f"park.{quadrant}",(sx*23,sy*28,0.4),(16,20,0.25),grass,"04 Streetscape",0.6)
-        for i,(bx,by,height) in enumerate(((47,47,13+quadrant*2),(25,54,8+quadrant))):
-            x,y=sx*bx,sy*by
-            cube(f"building.{quadrant}.{i}",(x,y,height/2+0.5),(15,15,height),facade_mats[quadrant],"05 Buildings",0.25)
-            cube(f"building.roof.{quadrant}.{i}",(x,y,height+0.7),(15.6,15.6,0.6),dark,"05 Buildings",0.12)
-            for floor in range(2,int(height),3):
-                cube(f"windows.front.{quadrant}.{i}.{floor}",(x,y-7.55,floor+0.6),(12,0.06,1.25),window_mat,"05 Buildings")
-                cube(f"windows.side.{quadrant}.{i}.{floor}",(x+7.55,y,floor+0.6),(0.06,12,1.25),window_mat,"05 Buildings")
-        for i,(tx,ty) in enumerate(((19,21),(29,21),(19,35),(30,35))):
-            x,y=sx*tx,sy*ty
-            cylinder(f"tree.trunk.{quadrant}.{i}",(x,y,1.5),0.25,3,dark)
-            crown=sphere(f"tree.crown.{quadrant}.{i}",(x,y,4.3),2.4,green)
-            crown.scale.z=1.2
-
-    # World-space live instrumentation beside each arm and above the rear edge.
-    for approach,(x,y) in {"N":(13,16),"S":(-38,-18),"E":(17,-18),"W":(-39,16)}.items():
-        cube("queue.panel."+approach,(x+10,y+1,0.3),(24,4,0.3),dark,"07 Instruments",0.2)
-        text("text.queue."+approach,f"{approach} / -- QUEUED",(x,y,0.48),1.15,teal)
-    cube("header.panel",(0,71,16),(142,0.8,13),dark,"07 Instruments",0.5)
-    text("title","NEXUS / TRAFFIC SIGNAL DIGITAL TWIN",(-67,70.5,18.5),3.1,vertical=True)
-    text("text.connection","CONNECTING",(-67,70.4,13.7),1.8,teal,True)
-    text("text.clock","00000.0 s / STOPPED",(-20,70.4,13.7),1.8,text_mat,True)
-    text("text.phase","NS GREEN / 25.0s",(24,70.4,13.7),1.8,text_mat,True)
-    text("text.metrics","QUEUED ---   ACTIVE ---   PASSED ----",(-66,-75.1,-0.3),2.1,teal,True)
+    # World-space live instrumentation above the north-west edge.
+    top = extent + 6
+    cube("header.panel",(0,top,16),(2*extent,0.8,13),dark,"07 Instruments",0.5)
+    text("title",DATA["name"].upper(),(-extent+3,top-0.5,18.5),3.1,vertical=True)
+    text("text.connection","CONNECTING",(-extent+3,top-0.6,13.7),1.8,teal,True)
+    text("text.clock","00000.0 s / STOPPED",(-extent*0.3,top-0.6,13.7),1.8,text_mat,True)
+    text("text.phase","N GREEN / 40.0s",(extent*0.3,top-0.6,13.7),1.8,text_mat,True)
+    text("text.metrics","QUEUED ---   ACTIVE ---   PASSED ----",(-extent+3,-top,-0.3),2.1,teal,True)
+    text("attribution","Map data (c) OpenStreetMap contributors",(extent-60,-top,-0.3),1.4,text_mat,True)
 
     camera_data=bpy.data.cameras.new("TR.Observer")
     camera=bpy.data.objects.new("TR.camera",camera_data)
     own(camera,"camera","08 Lighting")
-    camera.location=(95,-120,155)
+    camera.location=(extent*0.75,-extent*0.95,extent*1.25)
     camera.rotation_euler=(Vector((0,0,7))-camera.location).to_track_quat('-Z','Y').to_euler()
     enum(camera_data,"type","ORTHO")
-    camera_data.ortho_scale=255
+    camera_data.ortho_scale=extent*2.25
     camera_data.clip_end=1000
     scene.camera=camera
     detail_data=bpy.data.cameras.new("TR.DetailObserver")
@@ -187,7 +217,7 @@ def build_scene():
     enum(detail_data,"type","ORTHO")
     detail_data.ortho_scale=86
     detail_data.clip_end=1000
-    for name,location,energy,size in (("key",(0,-35,110),150000,90),("fill",(-70,-10,70),100000,75),("rim",(20,65,90),130000,65)):
+    for name,location,energy,size in (("key",(0,-35,150),300000,140),("fill",(-110,-10,100),200000,110),("rim",(30,110,120),250000,100)):
         data=bpy.data.lights.new("TR."+name,type=function_enum(bpy.data.lights,"new","type","AREA"))
         data.energy,data.size=energy,size
         obj=bpy.data.objects.new("TR."+name,data)
