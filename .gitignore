@@ -4,3 +4,4 @@ __pycache__/
 .codebase-memory/
 artifacts/
 *.blend1
+env
